@@ -1,0 +1,561 @@
+---
+title: "MLDS 491 Preliminary Analysis"
+author: "Ruyi Lu"
+date: "2024-11-03"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+products = read_csv('products.csv')
+countries = read_csv('countries.csv')
+flavors = read_csv('flavours (redacted).csv')
+
+length(unique(products$GNPD_PRODUCT_VARIANT_ID))
+length(unique(flavors$GNPD_PRODUCT_VARIANT_ID))
+
+data = data.frame()
+data = merge(products, countries, by = "COUNTRY_CODE_2_CHAR", all.x = TRUE)
+data = merge(data, flavors, by = "GNPD_PRODUCT_VARIANT_ID", all.x = TRUE)
+colSums(is.na(data))
+
+# for now, just drop all NAs for preliminary analysis
+data = na.omit(data)
+food = data[data$SUPERCATEGORY == 'Food',]
+drink = data[data$SUPERCATEGORY == 'Drink',]
+
+food = food %>% mutate(Month = format(as.Date(DATE_PUBLISHED), "%Y-%m"))
+drink = drink %>% mutate(Month = format(as.Date(DATE_PUBLISHED), "%Y-%m"))
+
+```
+
+### check if month rearrangement is needed: based on eggnog(163) and pumpkin pie(1424)
+```{r}
+colnames(food)
+
+eggnog <- food %>% mutate(YearMonth = floor_date(DATE_PUBLISHED, "month")) %>% filter(GNPD_FLAVOUR_ID==163) %>%
+  group_by(YearMonth) %>%
+  mutate(frequency = n()) %>% arrange()
+eggnog$Month <- format(eggnog$YearMonth, "%m")
+
+eggnog <- eggnog %>% group_by(Month) %>% summarise(total_freq = sum(frequency))
+
+# Plot the total number of eggnog flavor products by month
+ggplot(eggnog, aes(x = Month, y = total_freq)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Eggnog Flavor Products by Month",
+       x = "Month",
+       y = "Total Frequency of Eggnog Products") +
+  theme_minimal()
+
+
+```
+So probably no need to transform the datepublished data? 
+
+```{r}
+# products
+sapply(products, n_distinct)
+str(products)
+
+```
+
+
+```{r}
+# flavors
+# sapply(flavors, n_distinct)
+#str(flavors)
+
+# food - flavor count
+sapply(food, n_distinct)
+
+# drink - flavor count
+sapply(drink, n_distinct)
+
+```
+
+### set color for each flavor
+```{r}
+library(RColorBrewer)
+library(viridis)
+
+# Get 37 distinct colors (modify if you need more)
+flavor_colors <- viridis::viridis_pal(option = "turbo")(37)
+
+setequal(unique(food$FLAVOUR_CATEGORY), unique(drink$FLAVOUR_CATEGORY))
+
+unique_flavors <- unique(food$FLAVOUR_CATEGORY)
+color_palette <- setNames(flavor_colors[1:length(unique_flavors)], unique_flavors)
+```
+
+
+```{r}
+# different types of product categories
+# food
+ggplot(food, aes(x = reorder(CATEGORY, CATEGORY, function(x) -length(x)), fill = CATEGORY)) +
+  geom_bar() +
+  labs(title = "Count of Each Product Category for Food", x = "Product Category", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+  scale_fill_viridis_d(option = "turbo", begin = 0, end = 1, direction = 1)
+
+# drink
+ggplot(drink, aes(x = reorder(CATEGORY, CATEGORY, function(x) -length(x)), fill = CATEGORY)) +
+  geom_bar() +
+  labs(title = "Count of Each Product Category for Food", x = "Product Category", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+  scale_fill_viridis_d(option = "turbo", begin = 0, end = 1, direction = 1)
+
+```
+
+
+```{r, fig.width=10, fig.height=8}
+# different types of flavors
+#install.packages("viridis")
+library(viridis)
+# food
+ggplot(food, aes(x = reorder(FLAVOUR_CATEGORY, FLAVOUR_CATEGORY, function(x) -length(x)), fill = FLAVOUR_CATEGORY)) +
+  geom_bar() +
+  labs(title = "Count of Each Flavor Category for Food", x = "Flavor Category", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = color_palette)
+
+# drink
+ggplot(drink, aes(x = reorder(FLAVOUR_CATEGORY, FLAVOUR_CATEGORY, function(x) -length(x)), fill = FLAVOUR_CATEGORY)) +
+  geom_bar() +
+  labs(title = "Count of Each Flavor Category for Drink", x = "Flavor Category", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = color_palette)
+```
+
+```{r}
+data %>% group_by(REGION) %>% count(NAME) %>% arrange(REGION, desc(n)) %>% ungroup()
+```
+
+```{r}
+# flavors across product categories
+# food
+top10_flavors_f <- food %>%
+  group_by(CATEGORY, FLAVOUR_CATEGORY, Month = format(as.Date(DATE_PUBLISHED), "%Y-%m")) %>%
+  summarise(flavor_count = n()) %>%
+  ungroup() %>%
+  group_by(CATEGORY, Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month) %>%
+  group_by(CATEGORY, FLAVOUR_CATEGORY) %>%
+  summarise(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  arrange(CATEGORY, desc(average_popularity)) %>%
+  slice_max(average_popularity, n = 10) %>%
+  ungroup()
+
+# drink
+top10_flavors_d <- drink %>%
+  group_by(CATEGORY, FLAVOUR_CATEGORY, Month = format(as.Date(DATE_PUBLISHED), "%Y-%m")) %>%
+  summarise(flavor_count = n()) %>%
+  ungroup() %>%
+  group_by(CATEGORY, Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month) %>%
+  group_by(CATEGORY, FLAVOUR_CATEGORY) %>%
+  summarise(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  arrange(CATEGORY, desc(average_popularity)) %>%
+  slice_max(average_popularity, n = 10) %>%
+  ungroup()
+top10_flavors_d
+```
+
+```{r, fig.width=8, fig.height=6}
+#top10 flavors for each product category
+# food
+plot_top_flavors_f <- function(category) {
+  category_data <- top10_flavors_f %>% filter(CATEGORY == category)
+  ggplot(category_data, aes(x = FLAVOUR_CATEGORY, y = average_popularity, fill = FLAVOUR_CATEGORY)) +
+    geom_bar(stat = "identity") +
+    labs(title = paste("Food: Top 10 Flavors for", category),
+         x = "Flavour Category", y = "Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+    scale_fill_manual(values = color_palette)
+}
+
+lapply(unique(top10_flavors_f$CATEGORY), plot_top_flavors_f)
+```
+
+
+```{r, fig.width=8, fig.height=6}
+#top10 flavors for each market/country name
+# food
+top10_flavors_f <- food %>%
+  group_by(NAME, FLAVOUR_CATEGORY, Month) %>%
+  summarise(flavor_count = n()) %>%
+  ungroup() %>%
+  group_by(NAME, Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month) %>%
+  group_by(NAME, FLAVOUR_CATEGORY) %>%
+  summarise(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  arrange(NAME, desc(average_popularity)) %>%
+  slice_max(average_popularity, n = 10) %>%
+  ungroup()
+
+plot_top_flavors_f <- function(name) {
+  country_data <- top10_flavors_f %>% filter(NAME == name)
+  ggplot(country_data, aes(x = FLAVOUR_CATEGORY, y = average_popularity, fill = FLAVOUR_CATEGORY)) +
+    geom_bar(stat = "identity") +
+    labs(title = paste("Food: Top 10 Flavors for", name),
+         x = "Flavour Category", y = "Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+    scale_fill_manual(values = color_palette)
+}
+
+lapply(unique(top10_flavors_f$NAME), plot_top_flavors_f)
+```
+
+How to determine jump between countries: 
+```{r, fig.width=8, fig.height=6}
+# jump in markets
+# food
+popularity_by_region_f <- food %>%
+  group_by(REGION, NAME, FLAVOUR_CATEGORY, Month) %>%
+  summarise(flavor_count = n()) %>%
+  ungroup() %>%
+  group_by(NAME, Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month)
+
+popular_flavors <- popularity_by_region_f %>%
+  filter(popularity > 0.1) %>%
+  arrange(FLAVOUR_CATEGORY, Month, NAME)
+
+flavor_jumps <- popular_flavors %>%
+  group_by(FLAVOUR_CATEGORY) %>%
+  arrange(Month) %>%
+  mutate(next_market = lead(NAME),
+         next_month = lead(Month)) %>%
+  filter(!is.na(next_market) & next_market != NAME) %>%
+  group_by(NAME, next_market) %>%
+  mutate(jumps = n())
+
+flavor_jumps
+
+```
+
+
+
+```{r}
+#top10 flavors for each market/country name
+# drink
+plot_top_flavors_d <- function(category) {
+  category_data <- top10_flavors_d %>% filter(CATEGORY == category)
+  ggplot(category_data, aes(x = FLAVOUR_CATEGORY, y = average_popularity, fill = FLAVOUR_CATEGORY)) +
+    geom_bar(stat = "identity") +
+    labs(title = paste("Food: Top 10 Flavors for", category),
+         x = "Flavour Category", y = "Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+    scale_fill_manual(values = color_palette)
+}
+
+
+lapply(unique(top10_flavors_d$CATEGORY), plot_top_flavors_d)
+```
+
+```{r}
+library(lubridate)
+# popularity of fruit flavor across products?
+flavor_selected = c("Fruit", "Chocolate", "Nut", "Berry Fruit", "Syrup", "Spice", "Citrus Fruit", "Bakery", "Vegetable", "Flower")
+
+# food
+fruit_product_over_time_f = food %>%
+  mutate(Month = format(as.Date(DATE_PUBLISHED), "%Y-%m")) %>%
+  filter(FLAVOUR_CATEGORY == "Fruit") %>% 
+  group_by(CATEGORY, Month) %>%
+  summarise(flavor_count = n(), .groups = "drop") %>%
+  group_by(Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month) %>%
+  group_by(CATEGORY, Month) %>%
+  mutate(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  arrange(CATEGORY, desc(average_popularity))
+
+print(fruit_product_over_time_f)
+
+# drink
+fruit_product_over_time_d = drink %>%
+  mutate(Month = format(as.Date(DATE_PUBLISHED), "%Y-%m")) %>%
+  filter(FLAVOUR_CATEGORY == "Fruit") %>% 
+  group_by(CATEGORY, Month) %>%
+  summarise(flavor_count = n(), .groups = "drop") %>%
+  group_by(Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month) %>%
+  group_by(CATEGORY, Month) %>%
+  mutate(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  arrange(CATEGORY, desc(average_popularity))
+print(fruit_product_over_time_d)
+```
+
+```{r, fig.width=10, fig.height=8}
+fruit_product_over_time_f$Month <- as.Date(paste0(fruit_product_over_time_f$Month, "-01"))
+
+ggplot(fruit_product_over_time_f, aes(x = Month, y = average_popularity, color = CATEGORY)) +
+  geom_line(size = 0.75) +
+  labs(title = "Food: Popularity of Fruit Flavor of Each Product Over Time",
+       x = "Year & Month", y = "Average Popularity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+  scale_color_viridis_d(option = "turbo", begin = 0, end = 1, direction = 1)
+
+```
+
+```{r, fig.width=10, fig.height=8}
+fruit_product_over_time_d$Month <- as.Date(paste0(fruit_product_over_time_d$Month, "-01"))
+
+ggplot(fruit_product_over_time_d, aes(x = Month, y = average_popularity, color = CATEGORY)) +
+  geom_line(size = 0.75) +
+  labs(title = "Drink: Popularity of Fruit Flavor of Each Product Over Time",
+       x = "Year & Month", y = "Average Popularity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom") +
+  scale_color_viridis_d(option = "turbo", begin = 0, end = 1, direction = 1)
+
+
+```
+
+
+```{r, fig.width=10, fig.height=8}
+# Filter for Fruit flavor and calculate popularity over time for each country
+fruit_popularity <- popularity_by_region_f %>%
+  filter(FLAVOUR_CATEGORY == "Fruit") %>%
+  group_by(REGION, NAME, Month) %>%
+  summarise(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+  ungroup()
+
+fruit_popularity$Month <- as.Date(paste0(fruit_popularity$Month, "-01"))
+
+# Plot: popularity of Fruit flavor across time in each country
+# Define a function to plot popularity over time for a specific region
+plot_fruit_popularity_by_region <- function(region_name) {
+  # Filter data for the specified region
+  region_data <- popularity_by_region_f %>%
+    filter(FLAVOUR_CATEGORY == "Fruit", REGION == region_name) %>%
+    group_by(NAME, Month) %>%
+    summarise(average_popularity = mean(popularity, na.rm = TRUE)) %>%
+    ungroup()
+  
+  # Convert Month to Date format for accurate plotting
+  region_data$Month <- as.Date(paste0(region_data$Month, "-01"))
+  
+  # Create the plot
+  plot <- ggplot(region_data, aes(x = Month, y = average_popularity, color = NAME)) +
+    geom_line(size = 0.75) +
+    labs(title = paste("Popularity of Fruit Flavor Over Time in", region_name),
+         x = "Time (Month)", y = "Average Popularity",
+         color = "Country") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8), legend.position = "bottom")
+  
+  return(plot)
+}
+
+# Get unique regions (continents)
+regions <- unique(popularity_by_region_f$REGION)
+
+# Loop through each region and create a plot
+plots <- list()  # To store plots
+for (region in regions) {
+  plot <- plot_fruit_popularity_by_region(region)
+  plots[[region]] <- plot
+  
+  # Optionally, save each plot to a file
+  ggsave(filename = paste0("fruit_popularity_", region, ".png"), plot = plot, width = 8, height = 6)
+}
+
+# Display all plots in the list (if in an interactive environment)
+plots
+
+
+```
+
+
+Information retrieval: select features with hierarchy? how to reorganize to put things together? reasonable questions for user input? hierarchy of conditoins for data search? 
+\
+The type of output? the big picture question \
+1. forecasting and prediction models
+ - time series? launching and discontinuation
+ - classification? prediction outcome? idk
+ - outlier detection? abonormal event
+ - future prediction?
+2. visualization
+ - trending plots
+ - interactive dashboards
+3. textual based outputs
+ - key points, main patterns, general insights
+ - decision making supports
+
+\
+Select features of interests? or intersted directions (textual analysis of input so too much work)
+ 
+ 
+ 
+ 
+ 
+\
+Takeaways
+\
+To-dos: \
+1. split the dataset based on supcategory (food and drink)
+2. difference between berry fruit and fruit and vegetables??? combine different flavor groups? ()
+3. ***look at normalized counts instead (use prevalence or scale it? is it growing because overall amount is increasing or increasing in popularity? )
+4. same product in different markets: same id?
+5. look at the most important ones (top 5 in every dimension): overlappings? eg fruit flavor as important across countries? #products&region?
+6. clarify what does day mean? time data entered? time product purchased? 
+7. match the colors for each product or flavor? 
+
+
+```{r}
+#install.packages('plotly')
+library(plotly)
+```
+
+```{r}
+popularity_food <- food %>%
+  group_by(REGION, NAME, FLAVOUR_CATEGORY, Month) %>%
+  summarise(flavor_count = n()) %>%
+  ungroup() %>%
+  group_by(NAME, Month) %>%
+  mutate(total_count_per_month = sum(flavor_count)) %>%
+  ungroup() %>%
+  mutate(popularity = flavor_count / total_count_per_month)
+print(popularity_food)
+```
+
+
+```{r}
+calculate_flavor_popularity <- function(data, region, country, category, create_plot = TRUE) {
+  # Ensure the Month column is in the correct format
+  if (!"Month" %in% colnames(data)) {
+    stop("The data must contain a 'Month' column in 'YYYY-MM' format.")
+  }
+  
+  # Check if Month is in 'YYYY-MM' format
+  if (any(!grepl("^\\d{4}-\\d{2}$", data$Month))) {
+    stop("The 'Month' column must be in 'YYYY-MM' format.")
+  }
+  
+  # Filter data based on inputs
+  filtered_data <- data %>%
+    filter(
+      REGION == region,
+      NAME %in% country,  # Allow multiple countries
+      CATEGORY %in% category # Allow multiple product categories
+    )
+  
+  # Calculate popularity metrics
+  popularity_food <- filtered_data %>%
+    group_by(REGION, NAME, FLAVOUR_CATEGORY, CATEGORY, Month) %>%
+    summarise(flavor_count = n(), .groups = "drop") %>%
+    group_by(NAME, Month, CATEGORY) %>%
+    mutate(total_count_per_month = sum(flavor_count)) %>%
+    ungroup() %>%
+    mutate(popularity = flavor_count / total_count_per_month)
+  
+  # Print the resulting table
+  print(popularity_food)
+  
+  # Optional: Create a 3D plot
+  if (create_plot) {
+    plot <- plot_ly(
+      data = popularity_food,
+      x = ~NAME,                 # X-axis: Country
+      y = ~CATEGORY,             # Y-axis: Product Category
+      z = ~Month,                # Z-axis: Time (Month)
+     # size = ~popularity,        # Dot size represents popularity
+      color = ~FLAVOUR_CATEGORY, # Different colors for different flavors
+      type = "scatter3d",
+      mode = "markers",
+      marker = list(sizemode = "diameter"),
+      text = ~paste(
+        "Region:", REGION,
+        "<br>Country:", NAME,
+        "<br>Flavor Category:", FLAVOUR_CATEGORY,
+        "<br>Product Category:", CATEGORY,
+        "<br>Month:", Month,
+        "<br>Popularity:", flavor_count
+      )
+    ) %>%
+      layout(
+        scene = list(
+          xaxis = list(title = "Country"),
+          yaxis = list(title = "Product Category"),
+          zaxis = list(title = "Time (Month)")
+        )
+      )
+    
+    print(plot)
+  }
+  
+  # Return the calculated table
+  return(popularity_food)
+}
+
+```
+
+
+```{r}
+# Example dataset
+food_data <- data.frame(
+  REGION = rep("Asia Pacific", 12),
+  NAME = rep("Australia", 12),
+  FLAVOUR_CATEGORY = rep("Alcohol", 12),
+  Month = c("2015-01", "2015-02", "2015-03", "2015-04", "2015-05", "2015-06",
+            "2015-07", "2015-08", "2015-09", "2015-10", "2015-11", "2015-12"),
+  flavor_count = c(3, 2, 4, 1, 1, 2, 2, 2, 1, 2, 2, 4)
+)
+
+# Add total counts per month (simulate grouped data)
+food_data$total_count_per_month <- c(170, 185, 200, 355, 169, 215, 226, 160, 142, 261, 261, 235)
+
+# Add popularity
+food_data$popularity <- food_data$flavor_count / food_data$total_count_per_month
+
+```
+
+
+```{r}
+test_food = food %>% filter(REGION == "Europe")
+test_food
+typeof(c('a', 'b'))
+typeof(unique(test_food$NAME))
+list(unique(test_food$FLAVOUR_CATEGORY))
+
+```
+
+```{r}
+# install.packages("viridis")
+library(viridis)
+```
+
+
+```{r}
+c = unique(test_food$NAME)
+p = unique(test_food$CATEGORY)
+
+result <- calculate_flavor_popularity(
+  data = test_food,                   
+  region = "Europe",               
+  country = c,                
+  category = p,        
+  create_plot = TRUE                     
+)
+
+# View the result table
+print(result)
+```
+
